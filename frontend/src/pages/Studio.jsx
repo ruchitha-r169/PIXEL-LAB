@@ -1,5 +1,6 @@
 
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   UploadCloud,
   Waves,
@@ -14,8 +15,10 @@ import {
   MoveHorizontal,
   Eye,
   ArrowDown,
+  ArrowRight,
   CheckCircle2,
 } from 'lucide-react'
+import { useProcessing } from '../ProcessingContext'
 import './Studio.css'
 
 const DEFAULTS = {
@@ -25,9 +28,6 @@ const DEFAULTS = {
   gamma: 1,
 }
 
-// Six workflow steps, mapped to five backend outputs.
-// Gamma Correction and Final Enhanced Image share the
-// same processed output because gamma is the last operation.
 const STAGES = [
   {
     id: 'original',
@@ -69,48 +69,16 @@ const STAGES = [
 
 function Comparison({ before, after }) {
   const [position, setPosition] = useState(50)
-  const containerRef = useRef(null)
-  const draggingRef = useRef(false)
-
-  function move(event) {
-    if (!draggingRef.current || !containerRef.current) return
-
-    const rect = containerRef.current.getBoundingClientRect()
-    const percent =
-      ((event.clientX - rect.left) / rect.width) * 100
-
-    setPosition(Math.max(0, Math.min(100, percent)))
-  }
 
   return (
     <div className="comparison-container">
-      <div
-        ref={containerRef}
-        className="comparison-image"
-        onPointerDown={(event) => {
-          draggingRef.current = true
-          event.currentTarget.setPointerCapture(event.pointerId)
-          move(event)
-        }}
-        onPointerMove={move}
-        onPointerUp={() => {
-          draggingRef.current = false
-        }}
-        onPointerCancel={() => {
-          draggingRef.current = false
-        }}
-      >
-        <img
-          src={after}
-          alt="Enhanced result"
-          draggable={false}
-        />
+      <div className="comparison-image">
+        <img src={after} alt="Enhanced result" />
 
         <img
           src={before}
           alt="Original image"
           className="comparison-before"
-          draggable={false}
           style={{
             clipPath: `inset(0 ${100 - position}% 0 0)`,
           }}
@@ -149,16 +117,18 @@ function Comparison({ before, after }) {
 }
 
 export default function Studio() {
+  const { processingResult, setProcessingResult } = useProcessing()
+
   const [file, setFile] = useState(null)
   const [originalUrl, setOriginalUrl] = useState(null)
   const [settings, setSettings] = useState({ ...DEFAULTS })
-  const [result, setResult] = useState(null)
   const [selectedStage, setSelectedStage] = useState('original')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showComparison, setShowComparison] = useState(false)
 
   const inputRef = useRef(null)
+  const result = processingResult
 
   useEffect(() => {
     if (!file) {
@@ -180,15 +150,18 @@ export default function Studio() {
     ? result.stages[activeStage.backendKey]
     : originalUrl
 
+  function clearResult() {
+    setProcessingResult(null)
+    setSelectedStage('original')
+    setShowComparison(false)
+  }
+
   function updateSetting(name, value) {
     setSettings((previous) => ({
       ...previous,
       [name]: value,
     }))
-
-    setResult(null)
-    setSelectedStage('original')
-    setShowComparison(false)
+    clearResult()
     setError('')
   }
 
@@ -206,10 +179,8 @@ export default function Studio() {
     }
 
     setFile(selectedFile)
-    setResult(null)
+    clearResult()
     setError('')
-    setSelectedStage('original')
-    setShowComparison(false)
   }
 
   async function processImage() {
@@ -256,20 +227,21 @@ export default function Studio() {
         !data.stages ||
         required.some(
           (key) => typeof data.stages[key] !== 'string'
-        )
+        ) ||
+        !data.analysis
       ) {
         throw new Error(
-          'The backend did not return all required image stages.'
+          'Backend response is incomplete. Restart FastAPI with the updated backend.py.'
         )
       }
 
-      setResult(data)
+      setProcessingResult(data)
       setSelectedStage('final')
       setShowComparison(false)
     } catch (err) {
       setError(
         err instanceof TypeError
-          ? 'Cannot connect to FastAPI. Check that the backend is running on port 8000.'
+          ? 'Cannot connect to FastAPI. Check port 8000.'
           : err.message || 'Processing failed.'
       )
     } finally {
@@ -279,9 +251,7 @@ export default function Studio() {
 
   function reset() {
     setSettings({ ...DEFAULTS })
-    setResult(null)
-    setSelectedStage('original')
-    setShowComparison(false)
+    clearResult()
     setError('')
   }
 
@@ -303,7 +273,6 @@ export default function Studio() {
 
   return (
     <main className="main-content studio-page">
-      {/* PAGE HEADER */}
       <div className="studio-heading">
         <div>
           <div className="section-kicker">
@@ -345,7 +314,6 @@ export default function Studio() {
         </div>
       </div>
 
-      {/* IMAGE WORKSPACE + CONTROLS */}
       <div className="studio-layout">
         <section className="studio-card workspace-card">
           <div className="studio-card-header">
@@ -374,10 +342,7 @@ export default function Studio() {
                 tabIndex={0}
                 onClick={() => inputRef.current?.click()}
                 onKeyDown={(event) => {
-                  if (
-                    event.key === 'Enter' ||
-                    event.key === ' '
-                  ) {
+                  if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault()
                     inputRef.current?.click()
                   }
@@ -391,7 +356,6 @@ export default function Studio() {
                 <div className="upload-symbol">
                   <UploadCloud size={38} />
                 </div>
-
                 <h3>Drop your image here</h3>
                 <p>or click to browse from your device</p>
                 <span>PNG · JPG · JPEG · MAX 10 MB</span>
@@ -465,7 +429,6 @@ export default function Studio() {
           />
         </section>
 
-        {/* ENHANCEMENT CONTROLS */}
         <aside className="studio-card controls-card">
           <div className="studio-card-header">
             <div>
@@ -474,13 +437,9 @@ export default function Studio() {
               </span>
               <h2>Enhancement Controls</h2>
             </div>
-            <Sparkles
-              size={19}
-              className="controls-header-icon"
-            />
+            <Sparkles size={19} className="controls-header-icon" />
           </div>
 
-          {/* NOISE REDUCTION */}
           <div className="control-section">
             <div className="control-title">
               <Waves size={19} />
@@ -490,9 +449,7 @@ export default function Studio() {
               </div>
             </div>
 
-            <label htmlFor="filter-method">
-              Filter Method
-            </label>
+            <label htmlFor="filter-method">Filter Method</label>
 
             <select
               id="filter-method"
@@ -534,7 +491,6 @@ export default function Studio() {
             </p>
           </div>
 
-          {/* EDGE EXTRACTION */}
           <div className="control-section">
             <div className="control-title">
               <ScanLine size={19} />
@@ -547,15 +503,11 @@ export default function Studio() {
             <label>4-Neighbor Laplacian Kernel</label>
 
             <div className="kernel-display">
-              <span>0</span>
-              <span>1</span>
-              <span>0</span>
-              <span>1</span>
-              <span>−4</span>
-              <span>1</span>
-              <span>0</span>
-              <span>1</span>
-              <span>0</span>
+              {[0, 1, 0, 1, -4, 1, 0, 1, 0].map(
+                (value, index) => (
+                  <span key={index}>{value}</span>
+                )
+              )}
             </div>
 
             <p className="control-hint">
@@ -575,7 +527,6 @@ export default function Studio() {
             </button>
           </div>
 
-          {/* SHARPENING */}
           <div className="control-section">
             <div className="control-title">
               <Focus size={19} />
@@ -608,7 +559,6 @@ export default function Studio() {
             />
           </div>
 
-          {/* GAMMA CORRECTION */}
           <div className="control-section">
             <div className="control-title">
               <Sun size={19} />
@@ -651,14 +601,13 @@ export default function Studio() {
         </div>
       )}
 
-      {/* SIX-STEP WORKFLOW */}
       <section className="studio-card studio-workflow-card">
         <div className="studio-card-header">
           <div>
             <span className="studio-overline">
               DIGITAL IMAGE PROCESSING
             </span>
-            <h2>Updated Processing Workflow</h2>
+            <h2>Processing Workflow</h2>
           </div>
 
           <span className="studio-status">
@@ -669,7 +618,6 @@ export default function Studio() {
         <div className="studio-workflow">
           {STAGES.map((stage, index) => {
             const Icon = stage.icon
-            const isActive = selectedStage === stage.id
 
             return (
               <div key={stage.id}>
@@ -682,7 +630,9 @@ export default function Studio() {
                 <button
                   type="button"
                   className={`studio-workflow-step ${
-                    isActive ? 'workflow-active' : ''
+                    selectedStage === stage.id
+                      ? 'workflow-active'
+                      : ''
                   }`}
                   disabled={
                     !result && stage.id !== 'original'
@@ -690,12 +640,8 @@ export default function Studio() {
                   onClick={() => chooseStage(stage.id)}
                 >
                   <Icon size={19} />
-
                   <span>{stage.label}</span>
-
-                  {result && (
-                    <CheckCircle2 size={17} />
-                  )}
+                  {result && <CheckCircle2 size={17} />}
                 </button>
               </div>
             )
@@ -703,7 +649,6 @@ export default function Studio() {
         </div>
       </section>
 
-      {/* PROCESSING RESULTS */}
       {result && (
         <>
           <section className="studio-card results-card">
@@ -747,18 +692,15 @@ export default function Studio() {
             </div>
           </section>
 
-          {/* COMPARE AND DOWNLOAD */}
           <section className="studio-card export-card">
             <div>
               <span className="studio-overline">
                 FINAL OUTPUT
               </span>
-
-              <h2>Compare & Export</h2>
-
+              <h2>Compare, Analyze & Export</h2>
               <p>
-                Compare the original and enhanced images,
-                or download the final result.
+                Compare your images, view numerical analysis,
+                or download the enhanced output.
               </p>
             </div>
 
@@ -775,6 +717,15 @@ export default function Studio() {
                   ? 'Hide Comparison'
                   : 'Compare'}
               </button>
+
+              <Link
+                to="/analysis"
+                className="studio-primary-btn"
+                style={{ textDecoration: 'none' }}
+              >
+                <ArrowRight size={17} />
+                View Analysis
+              </Link>
 
               <button
                 type="button"
